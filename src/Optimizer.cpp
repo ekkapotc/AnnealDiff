@@ -1,4 +1,5 @@
 #include "Optimizer.hpp"
+
 #include <random>
 #include <algorithm>
 #include <thread>
@@ -109,7 +110,10 @@ ParallelTemperingResult run_parallel_tempering_sa(
     int steps_per_sweep,
     int exchange_rounds
 ) {
-    std::mt19937 master_rng(1337);
+
+    std::random_device rd;
+    std::mt19937 master_rng(rd());
+
     std::uniform_real_distribution<double> rand_unif(0.0, 1.0);
 
     std::vector<Replica> replicas;
