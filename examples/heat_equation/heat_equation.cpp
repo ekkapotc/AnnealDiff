@@ -87,6 +87,12 @@ int main() {
             // Extract adjacency using your existing function
             std::vector<int> output_ids = {loss.id};
             GraphAdjacency adj = extract_graph_adjacency(local_graph, param_ids, output_ids);
+
+	    // --- Standard Reverse-Mode Baseline ---
+            std::vector<int> reverse_order = adj.intermediates;
+            // Sort descending to simulate standard reverse-mode AD
+            std::sort(reverse_order.rbegin(), reverse_order.rend()); 
+            int reverse_cost = evaluate_elimination_cost(adj.in_edges, adj.out_edges, reverse_order);
             
             // Run your advanced SA optimizer
             ParallelTemperingResult sa_result = run_parallel_tempering_sa(
@@ -98,6 +104,23 @@ int main() {
             
             std::cout << "Optimization complete. Best cost: " << sa_result.min_cost 
                       << " | Swaps: " << sa_result.total_swaps_accepted << "\n";
+
+	    // --- Print the Comparison ---
+            std::cout << "Optimization complete!\n";
+            std::cout << "--------------------------------------------------\n";
+            std::cout << "Standard Reverse-Mode Cost : " << reverse_cost << " ops\n";
+            std::cout << "Optimized (SA) Cost        : " << sa_result.min_cost << " ops\n";
+            std::cout << "FLOPs Saved                : " << (reverse_cost - sa_result.min_cost) << " ops\n";
+            std::cout << "--------------------------------------------------\n";
+            
+            std::cout << "Optimal elimination ordering: [";
+            for (size_t i = 0; i < optimized_order.size(); ++i) {
+                std::cout << optimized_order[i];
+                if (i != optimized_order.size() - 1) {
+                    std::cout << ", ";
+                }
+            }
+            std::cout << "]\n\n";
         }
 
         // 3. Compute gradients using the optimized order

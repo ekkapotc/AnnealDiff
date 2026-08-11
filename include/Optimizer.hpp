@@ -17,6 +17,12 @@ struct ParallelTemperingResult {
     int total_swaps_accepted;
 };
 
+int evaluate_elimination_cost(
+    std::unordered_map<int, std::unordered_set<int>> in_adj,
+    std::unordered_map<int, std::unordered_set<int>> out_adj,
+    const std::vector<int>& order
+);
+
 GraphAdjacency extract_graph_adjacency(
     const ADGraph& graph, 
     const std::vector<int>& input_ids, 
