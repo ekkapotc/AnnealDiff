@@ -17,7 +17,6 @@ std::vector<double> simulate_heat_1d(double alpha_val, double T_left_val,
                                      std::vector<int>* param_ids_out = nullptr,
                                      ADVar* loss_out = nullptr,
                                      const std::vector<double>& target_u = {}) {
-    // ... [Keep your exact simulate_heat_1d code here] ...
     ADVar alpha(alpha_val);
     ADVar T_left(T_left_val);
     if (param_ids_out) {
