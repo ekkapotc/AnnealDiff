@@ -144,7 +144,9 @@ void ADGraph::emit_gradient_code(
     out << "// ========================================================\n";
     out << "#include <vector>\n";
     out << "#include <map>\n\n";
-    out << "void compute_static_gradients(\n";
+
+
+    out << "extern \"C\" void compute_static_gradients(\n";
     out << "    const std::map<std::pair<int, int>, double>& init_edges,\n";
     out << "    std::map<int, double>& out_grads\n) {\n\n";
 

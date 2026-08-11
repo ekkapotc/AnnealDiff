@@ -1,15 +1,23 @@
 #include <algorithm>
 #include <cmath>
+#include <dlfcn.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <fstream>
-#include <vector>
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "ADGraph.hpp"
 #include "Optimizer.hpp"
 
+// Function pointer signature for the emitted C-linkage static function
+typedef void (*StaticGradFn)(
+    const std::map<std::pair<int, int>, double>&,
+    std::map<int, double>&
+);
+
+// Lightweight Adam Optimizer
 class AdamOptimizer {
 private:
   double alpha, beta1, beta2, epsilon;
@@ -39,7 +47,7 @@ public:
 
 int main() {
   std::cout << "==================================================\n";
-  std::cout << "  MLP PINN Training (Adam + SA Optimized Graph)   \n";
+  std::cout << "  MLP PINN Training (Adam + JIT Static Graph)     \n";
   std::cout << "==================================================\n";
 
   // 1. Hyperparameters & Initialization
@@ -55,7 +63,7 @@ int main() {
     weights[i] = 0.1 * ((i % 11) - 5.0);
   AdamOptimizer adam(num_params, lr);
 
-  // Helper Lambda: Builds the exact same graph deterministically
+  // Helper Lambda: Builds graph deterministically
   auto build_pinn_graph = [&](ADGraph &graph,
                               std::vector<ADVar> &ad_params) -> ADVar {
     auto mlp_forward = [&](ADVar t) {
@@ -90,10 +98,9 @@ int main() {
   };
 
   // =========================================================
-  // Phase 1: The "Dry Run" - Extract Topology & Run SA
+  // Phase 1: SA Topology Optimization, CodeGen & JIT Pipeline
   // =========================================================
-  std::cout << "--- Phase 1: SA Topology Optimization ---\n";
-  std::cout << "Extracting 31K+ node graph. Running Parallel Tempering SA...\n";
+  std::cout << "--- Phase 1: Topology Optimization & JIT Pipeline ---\n";
 
   std::vector<int> optimal_order;
   {
@@ -112,29 +119,49 @@ int main() {
     GraphAdjacency adj =
         extract_graph_adjacency(dry_run_graph, param_ids, {total_loss.id});
 
-    // Reverse mode baseline cost
-    std::vector<int> rev_order = adj.intermediates;
-    std::sort(rev_order.rbegin(), rev_order.rend());
-    int rev_cost =
-        evaluate_elimination_cost(adj.in_edges, adj.out_edges, rev_order);
-
-    // 1. Get Reverse Topological Baseline
     std::vector<int> initial_order = adj.intermediates;
     std::sort(initial_order.rbegin(), initial_order.rend());
 
-    // 2. Pass initial_order into SA as the starting state
     ParallelTemperingResult sa_res = run_parallel_tempering_sa_seeded(
         adj, initial_order, 8, 0.1, 100.0, 30, 100);
     optimal_order = sa_res.best_order;
 
-    std::cout << "Reverse Mode FLOPs : " << rev_cost << "\n";
-    std::cout << "SA Optimized FLOPs : " << sa_res.min_cost << "\n";
-    std::cout << "FLOPs saved per epoch : " << (rev_cost - sa_res.min_cost)
-              << "\n\n";
+    // 1. Emit static C++ code
+    std::ofstream outfile("static_gradients.cpp");
+    dry_run_graph.emit_gradient_code(total_loss.id, param_ids, optimal_order, outfile);
+    outfile.close();
+    std::cout << "Emitted static_gradients.cpp successfully.\n";
   }
 
+  // 2. Compile static_gradients.cpp into a shared library (.so)
+  std::cout << "Compiling static_gradients.cpp with g++ -O3...\n";
+  int compile_res = system("g++ -O3 -shared -fPIC static_gradients.cpp -o libstatic_grads.so");
+  if (compile_res != 0) {
+    std::cerr << "Error: Failed to JIT compile static_gradients.cpp!\n";
+    return 1;
+  }
+
+  // 3. Dynamically load shared library using POSIX dlopen
+  void* handle = dlopen("./libstatic_grads.so", RTLD_LAZY);
+  if (!handle) {
+    std::cerr << "Error: Cannot load libstatic_grads.so: " << dlerror() << '\n';
+    return 1;
+  }
+
+  // 4. Extract function pointer via dlsym
+  dlerror(); // Clear error buffer
+  StaticGradFn compute_static_gradients = (StaticGradFn) dlsym(handle, "compute_static_gradients");
+  const char* dlsym_error = dlerror();
+  if (dlsym_error) {
+    std::cerr << "Error: Cannot load symbol 'compute_static_gradients': " << dlsym_error << '\n';
+    dlclose(handle);
+    return 1;
+  }
+
+  std::cout << "Successfully JIT-compiled and loaded compute_static_gradients()\n\n";
+
   // =========================================================
-  // Phase 2: High-Speed Training Loop using Cached SA Order
+  // Phase 2: High-Speed Training Loop using JIT Function
   // =========================================================
   std::cout << "--- Phase 2: Training (3000 Epochs) ---\n";
 
@@ -151,9 +178,26 @@ int main() {
 
     ADVar total_loss = build_pinn_graph(graph, ad_params);
 
-    // USE THE SA OPTIMIZED ORDER HERE!
-    std::vector<ADVar> weight_grads = graph.compute_gradient_graph_custom_order(
-        total_loss.id, param_ids, optimal_order);
+    // 1. Extract local Jacobians (edge derivatives)
+    std::map<std::pair<int, int>, double> init_edges;
+    for (int v = 0; v < graph.snapshot().node_count; ++v) {
+      for (const auto& edge : graph.rev_adj[v]) {
+        int u = edge.first;
+        int weight_id = edge.second;
+        init_edges[{u, v}] += graph.node_values[weight_id];
+      }
+    }
+
+    // 2. Execute JIT static gradient function
+    std::map<int, double> out_grads;
+    compute_static_gradients(init_edges, out_grads);
+
+    // 3. Format gradients for Adam optimizer updates
+    std::vector<ADVar> weight_grads;
+    weight_grads.reserve(num_params);
+    for (int id : param_ids) {
+      weight_grads.push_back(ADVar(out_grads[id]));
+    }
 
     adam.update(weights, weight_grads);
 
@@ -164,6 +208,9 @@ int main() {
                 << " | Tape Nodes: " << graph.snapshot().node_count << "\n";
     }
   }
+
+  // Unload the JIT shared object library
+  dlclose(handle);
 
   // ====================================================
   // Phase 3: Final Evaluation
