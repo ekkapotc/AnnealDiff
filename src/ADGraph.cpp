@@ -26,7 +26,11 @@ std::vector<ADVar> ADGraph::compute_gradient_graph(int output_id, const std::vec
     for (int v = output_id; v >= 0; --v) {
         if (adjoints.find(v) != adjoints.end()) {
             ADVar grad_v = adjoints[v];
-            for (auto& edge : rev_adj[v]) {
+		
+            // FIX: Make a copy to avoid iterator invalidation when the tape grows
+            std::vector<std::pair<int, int>> current_edges = rev_adj[v];
+
+            for (auto& edge : current_edges) {
                 int u = edge.first;
                 ADVar weight_var(edge.second, node_values[edge.second]);
                 ADVar msg = grad_v * weight_var;
