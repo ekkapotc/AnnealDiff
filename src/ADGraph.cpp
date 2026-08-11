@@ -54,13 +54,25 @@ std::vector<ADVar> ADGraph::compute_gradient_graph_custom_order(
 {
     // Adjacency map: edges[u][v] represents the partial derivative d(v) / d(u)
     std::unordered_map<int, std::unordered_map<int, ADVar>> edges;
-    
+     
     // 1. Populate initial edges from the tape
-    for (int v = 0; v < next_id; ++v) {
-        for (auto& edge : rev_adj[v]) {
+    int original_node_count = next_id; // Capture size before generating new AD nodes
+    for (int v = 0; v < original_node_count; ++v) {
+        
+        // Make a copy of the edges so reallocation of rev_adj doesn't crash us
+        std::vector<std::pair<int, int>> current_edges = rev_adj[v]; 
+        
+        for (auto& edge : current_edges) {
             int u = edge.first;
             int weight_id = edge.second;
-            edges[u][v] = ADVar(weight_id, node_values[weight_id]);
+            ADVar new_weight(weight_id, node_values[weight_id]);
+            
+            // Accumulate parallel edges
+            if (edges[u].count(v)) {
+                edges[u][v] = edges[u][v] + new_weight;
+            } else {
+                edges[u][v] = new_weight;
+            }
         }
     }
 
