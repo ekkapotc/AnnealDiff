@@ -175,7 +175,9 @@ ParallelTemperingResult run_parallel_tempering_sa_seeded(
     const GraphAdjacency &adj, const std::vector<int> &seed_order,
     int num_replicas, double min_temp, double max_temp, int num_steps,
     int steps_per_temp) {
-  std::mt19937 rng(1337);
+
+  std::random_device rd;
+  std::mt19937 rng(rd());
   std::vector<std::vector<int>> replicas(num_replicas, seed_order);
   std::vector<int> replica_costs(num_replicas);
 
@@ -198,9 +200,6 @@ ParallelTemperingResult run_parallel_tempering_sa_seeded(
   result.min_cost =
       evaluate_elimination_cost(adj.in_edges, adj.out_edges, seed_order);
 
-  // Run standard Parallel Tempering loops...
-  // (Use your existing replica swap logic here, updating result.best_order
-  // whenever a lower cost is found)
 
   return result;
 }
