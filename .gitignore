@@ -1,0 +1,7 @@
+# build outputs
+bin
+obj
+*.exe
+*.o
+*.a
+*.so
