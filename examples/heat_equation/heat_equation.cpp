@@ -8,7 +8,6 @@
 #include "ADGraph.hpp"
 #include "Optimizer.hpp" 
 
-
 // ---------------------------------------------------------
 // Original 1D Heat Equation Simulation
 // ---------------------------------------------------------
@@ -102,8 +101,6 @@ int main() {
         }
 
         // 3. Compute gradients using the optimized order
-        // Note: You will need to implement an overload in ADGraph for this!
-        // Currently, your compute_gradient_graph does a hardcoded reverse pass.
         std::vector<ADVar> grads = local_graph.compute_gradient_graph_custom_order(
             loss.id, param_ids, optimized_order
         );
