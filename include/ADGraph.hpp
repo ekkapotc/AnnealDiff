@@ -10,19 +10,26 @@ extern thread_local int current_ad_depth;
 extern thread_local bool s_grad_enabled;
 extern const int MAX_AD_DEPTH;
 
+// RAII Scope Guard to temporarily disable tape recording
 class NoGradGuard {
+private:
+    bool prev_state;
 public:
-    bool previous_state;
-    NoGradGuard() {
-        previous_state = s_grad_enabled;
-        s_grad_enabled = false;
-    }
-    ~NoGradGuard() {
-        s_grad_enabled = previous_state;
-    }
+    NoGradGuard();
+    ~NoGradGuard();
+    
+    // Prevent copying to enforce strict RAII semantics
+    NoGradGuard(const NoGradGuard&) = delete;
+    NoGradGuard& operator=(const NoGradGuard&) = delete;
 };
 
 class ADVar;
+
+// Fixed boundary snapshot of the tape
+struct TapeSnapshot {
+    int node_count;
+    int size() const { return node_count; }
+};
 
 class ADGraph {
 public:
@@ -30,13 +37,19 @@ public:
     std::vector<double> node_values;
     std::vector<std::vector<std::pair<int, int>>> rev_adj;
 
+public:
     int create_node(double val);
     void add_edge(int from, int to, int weight_node_id);
+    
+    // Returns a snapshot of the current graph boundary
+    TapeSnapshot snapshot() const { return TapeSnapshot{ next_id }; }
+
     std::vector<ADVar> compute_gradient_graph(int output_id, const std::vector<int>& input_ids);
     std::vector<ADVar> compute_gradient_graph_custom_order(
         int output_id, 
         const std::vector<int>& input_ids, 
-        const std::vector<int>& elimination_order);
+        const std::vector<int>& order
+    );
 };
 
 class ADVar {

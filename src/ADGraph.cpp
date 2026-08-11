@@ -8,6 +8,15 @@ thread_local int current_ad_depth = 1;
 thread_local bool s_grad_enabled = true;
 const int MAX_AD_DEPTH = 3;
 
+// --- RAII Guard Implementation ---
+NoGradGuard::NoGradGuard() : prev_state(s_grad_enabled) {
+    s_grad_enabled = false;
+}
+
+NoGradGuard::~NoGradGuard() {
+    s_grad_enabled = prev_state;
+}
+
 int ADGraph::create_node(double val) {
     int id = next_id++;
     node_values.push_back(val);
@@ -19,6 +28,7 @@ void ADGraph::add_edge(int from, int to, int weight_node_id) {
     rev_adj[to].push_back({from, weight_node_id});
 }
 
+// --- Gradient Computation with TapeSnapshot ---
 std::vector<ADVar> ADGraph::compute_gradient_graph(int output_id, const std::vector<int>& input_ids) {
     std::unordered_map<int, ADVar> adjoints;
     adjoints.insert({output_id, ADVar(1.0)});
@@ -26,10 +36,10 @@ std::vector<ADVar> ADGraph::compute_gradient_graph(int output_id, const std::vec
     for (int v = output_id; v >= 0; --v) {
         if (adjoints.find(v) != adjoints.end()) {
             ADVar grad_v = adjoints[v];
-		
-            // FIX: Make a copy to avoid iterator invalidation when the tape grows
+            
+            // Local snapshot of edges protects against iterator invalidation during rev_adj reallocations
             std::vector<std::pair<int, int>> current_edges = rev_adj[v];
-
+            
             for (auto& edge : current_edges) {
                 int u = edge.first;
                 ADVar weight_var(edge.second, node_values[edge.second]);
@@ -56,22 +66,20 @@ std::vector<ADVar> ADGraph::compute_gradient_graph_custom_order(
     const std::vector<int>& input_ids, 
     const std::vector<int>& order) 
 {
-    // Adjacency map: edges[u][v] represents the partial derivative d(v) / d(u)
     std::unordered_map<int, std::unordered_map<int, ADVar>> edges;
-     
-    // 1. Populate initial edges from the tape
-    int original_node_count = next_id; // Capture size before generating new AD nodes
-    for (int v = 0; v < original_node_count; ++v) {
-        
-        // Make a copy of the edges so reallocation of rev_adj doesn't crash us
-        std::vector<std::pair<int, int>> current_edges = rev_adj[v]; 
+    
+    // Freeze the graph iteration boundary using TapeSnapshot
+    TapeSnapshot tape = snapshot();
+
+    // 1. Populate initial edges up to the snapshot limit
+    for (int v = 0; v < tape.size(); ++v) {
+        std::vector<std::pair<int, int>> current_edges = rev_adj[v];
         
         for (auto& edge : current_edges) {
             int u = edge.first;
             int weight_id = edge.second;
             ADVar new_weight(weight_id, node_values[weight_id]);
             
-            // Accumulate parallel edges
             if (edges[u].count(v)) {
                 edges[u][v] = edges[u][v] + new_weight;
             } else {
@@ -80,19 +88,17 @@ std::vector<ADVar> ADGraph::compute_gradient_graph_custom_order(
         }
     }
 
-    // 2. Perform cross-country vertex elimination
+    // 2. Cross-country elimination
     for (int v : order) {
         for (auto& in_edge : edges) {
             int u = in_edge.first;
-            // If u points to the vertex 'v' being eliminated
             if (in_edge.second.count(v)) {
                 ADVar du_v = in_edge.second[v];
                 
-                // Connect 'u' directly to all targets 'w' that 'v' points to
                 for (auto& out_edge : edges[v]) {
                     int w = out_edge.first;
                     ADVar dv_w = out_edge.second;
-                    ADVar msg = du_v * dv_w; // Chain rule
+                    ADVar msg = du_v * dv_w;
                     
                     if (edges[u].count(w)) {
                         edges[u][w] = edges[u][w] + msg;
@@ -103,10 +109,10 @@ std::vector<ADVar> ADGraph::compute_gradient_graph_custom_order(
                 in_edge.second.erase(v);
             }
         }
-        edges.erase(v); // Remove the eliminated vertex completely
+        edges.erase(v);
     }
 
-    // 3. Extract final gradients for the requested inputs
+    // 3. Extract gradients
     std::vector<ADVar> gradients;
     for (int id : input_ids) {
         if (edges.count(id) && edges[id].count(output_id)) {
