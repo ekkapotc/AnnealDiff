@@ -50,7 +50,12 @@ int main() {
     // Extract adjacency for f(x, y)
     std::vector<int> out_f = {f.id};
     GraphAdjacency adj_grad = extract_graph_adjacency(graph, inputs, out_f);
-    
+
+    // Fordward mode baseline
+    std::vector<int> for_order_grad = adj_grad.intermediates;
+    int for_cost_grad = evaluate_elimination_cost(adj_grad.in_edges, adj_grad.out_edges, for_order_grad);
+    std::cout << "Forward Mode Cost (Gradient) : " << for_cost_grad << " FLOPs\n";
+
     // Reverse mode baseline
     std::vector<int> rev_order_grad = adj_grad.intermediates;
     std::sort(rev_order_grad.rbegin(), rev_order_grad.rend());
@@ -78,7 +83,11 @@ int main() {
     // --- Hessian Row 1: d(df/dx) / d(x,y) ---
     std::vector<int> out_df_dx = {df_dx.id};
     GraphAdjacency adj_h1 = extract_graph_adjacency(graph, inputs, out_df_dx);
-    
+   
+
+    std::vector<int> for_order_h1 = adj_h1.intermediates;
+    int for_cost_h1 = evaluate_elimination_cost(adj_h1.in_edges, adj_h1.out_edges, for_order_h1);
+ 
     std::vector<int> rev_order_h1 = adj_h1.intermediates;
     std::sort(rev_order_h1.rbegin(), rev_order_h1.rend());
     int rev_cost_h1 = evaluate_elimination_cost(adj_h1.in_edges, adj_h1.out_edges, rev_order_h1);
@@ -87,6 +96,7 @@ int main() {
     
     std::vector<ADVar> grad_df_dx = graph.compute_gradient_graph_custom_order(df_dx.id, inputs, sa_h1.best_order);
     
+    std::cout << "[Hessian Row 1] Forward Cost: " << for_cost_h1 << " FLOPs\n";
     std::cout << "[Hessian Row 1] Reverse Cost: " << rev_cost_h1 << " FLOPs\n";
     std::cout << "[Hessian Row 1] SA Cost     : " << sa_h1.min_cost << " FLOPs\n";
     std::cout << "d2f/dx2  = " << grad_df_dx[0].val << " (Expected: 24)\n";
@@ -96,6 +106,8 @@ int main() {
     std::vector<int> out_df_dy = {df_dy.id};
     GraphAdjacency adj_h2 = extract_graph_adjacency(graph, inputs, out_df_dy);
     
+    std::vector<int> for_order_h2 = adj_h2.intermediates;
+    int for_cost_h2 = evaluate_elimination_cost(adj_h2.in_edges, adj_h2.out_edges, for_order_h2);
     std::vector<int> rev_order_h2 = adj_h2.intermediates;
     std::sort(rev_order_h2.rbegin(), rev_order_h2.rend());
     int rev_cost_h2 = evaluate_elimination_cost(adj_h2.in_edges, adj_h2.out_edges, rev_order_h2);
@@ -104,6 +116,7 @@ int main() {
     
     std::vector<ADVar> grad_df_dy = graph.compute_gradient_graph_custom_order(df_dy.id, inputs, sa_h2.best_order);
     
+    std::cout << "[Hessian Row 2] Forward Cost: " << for_cost_h2 << " FLOPs\n";
     std::cout << "[Hessian Row 2] Reverse Cost: " << rev_cost_h2 << " FLOPs\n";
     std::cout << "[Hessian Row 2] SA Cost     : " << sa_h2.min_cost << " FLOPs\n";
     std::cout << "d2f/dydx = " << grad_df_dy[0].val << " (Expected: 8)\n";
