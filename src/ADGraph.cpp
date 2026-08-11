@@ -225,6 +225,95 @@ void ADGraph::emit_gradient_code(
     out << "}\n";
 }
 
+void ADGraph::emit_gradient_bare_metal_code(
+    int output_id, 
+    const std::vector<int>& input_ids, 
+    const std::vector<int>& order, 
+    std::ostream& out
+) const {
+    out << "// ========================================================\n";
+    out << "// Auto-Generated Bare-Metal Static Gradient Pass\n";
+    out << "// ========================================================\n";
+    out << "#include <cmath>\n\n";
+
+    out << "extern \"C\" void compute_static_gradients_fast(\n";
+    out << "    const double* __restrict__ init_edges,\n";
+    out << "    double* __restrict__ out_grads\n) {\n\n";
+
+    // 1. Assign flat sequential indices to every edge in the graph
+    std::unordered_map<int, std::unordered_map<int, std::vector<int>>> edge_indices;
+    int flat_edge_counter = 0;
+
+    for (int v = 0; v < next_id; ++v) {
+        for (const auto& edge : rev_adj[v]) {
+            int u = edge.first;
+            edge_indices[u][v].push_back(flat_edge_counter++);
+        }
+    }
+
+    std::unordered_map<int, std::unordered_map<int, bool>> active_edges;
+
+    out << "    // --- 1. Load Initial Jacobians (Contiguous Pointer Offsets) ---\n";
+    for (int v = 0; v < next_id; ++v) {
+        for (const auto& edge : rev_adj[v]) {
+            int u = edge.first;
+            if (!active_edges[u].count(v)) {
+                active_edges[u][v] = true;
+                
+                // Sum parallel edge indices if multiple edges connect u to v
+                const auto& indices = edge_indices[u][v];
+                out << "    double e_" << u << "_" << v << " = ";
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    out << "init_edges[" << indices[i] << "]" 
+                        << (i + 1 < indices.size() ? " + " : ";\n");
+                }
+            }
+        }
+    }
+    out << "\n";
+
+    out << "    // --- 2. Vertex Elimination (Optimized Order) ---\n";
+    for (int v : order) {
+        std::vector<int> in_nodes;
+        for (const auto& pair : active_edges) {
+            if (pair.second.count(v)) in_nodes.push_back(pair.first);
+        }
+        std::vector<int> out_nodes;
+        if (active_edges.count(v)) {
+            for (const auto& pair : active_edges[v]) out_nodes.push_back(pair.first);
+        }
+
+        bool eliminated = false;
+        for (int u : in_nodes) {
+            for (int w : out_nodes) {
+                eliminated = true;
+                if (active_edges[u].count(w)) {
+                    out << "    e_" << u << "_" << w << " += e_" << u << "_" << v 
+                        << " * e_" << v << "_" << w << ";\n";
+                } else {
+                    out << "    double e_" << u << "_" << w << " = e_" << u << "_" << v 
+                        << " * e_" << v << "_" << w << ";\n";
+                    active_edges[u][w] = true;
+                }
+            }
+            active_edges[u].erase(v);
+        }
+        active_edges.erase(v);
+        if (eliminated) out << "    // (Eliminated Node " << v << ")\n\n";
+    }
+
+    out << "    // --- 3. Extract Target Gradients ---\n";
+    for (size_t i = 0; i < input_ids.size(); ++i) {
+        int id = input_ids[i];
+        if (active_edges.count(id) && active_edges[id].count(output_id)) {
+            out << "    out_grads[" << i << "] = e_" << id << "_" << output_id << ";\n";
+        } else {
+            out << "    out_grads[" << i << "] = 0.0;\n";
+        }
+    }
+    out << "}\n";
+}
+
 ADVar::ADVar(double v) : val(v) {
   id = (current_graph && s_grad_enabled) ? current_graph->create_node(v) : -1;
 }

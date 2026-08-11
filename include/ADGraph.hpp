@@ -62,6 +62,13 @@ public:
         std::ostream& out
   ) const;
 
+  void emit_gradient_bare_metal_code(
+        int output_id, 
+        const std::vector<int>& input_ids, 
+        const std::vector<int>& order, 
+        std::ostream& out
+  ) const;
+
 };
 
 class ADVar {
